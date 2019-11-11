@@ -1,37 +1,10 @@
-/*
- * The MIT License (MIT)
- *
- * Copyright (c) 2014 by Bart Kiers
- *
- * Permission is hereby granted, free of charge, to any person
- * obtaining a copy of this software and associated documentation
- * files (the "Software"), to deal in the Software without
- * restriction, including without limitation the rights to use,
- * copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following
- * conditions:
- *
- * The above copyright notice and this permission notice shall be
- * included in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
- * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
- * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
- * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
- * OTHER DEALINGS IN THE SOFTWARE.
- *
- * Project      : sqlite-parser; an ANTLR4 grammar for SQLite
- *                https://github.com/bkiers/sqlite-parser
- * Developed by : Bart Kiers, bart@big-o.nl
- */
+
 grammar Sql;
 
 parse
- : ( sql_stmt_list | error )* EOF
+ :
+ function_stms*
+ ( sql_stmt_list | error )* EOF
  ;
 
 error
@@ -75,9 +48,203 @@ sql_stmt
                                       | select_stmt
                                       | update_stmt
                                       | update_stmt_limited
-                                      | vacuum_stmt )
+                                      | vacuum_stmt
+                                      | var_stmt
+
+                                      )
  ;
 
+var_stmt
+: K_VAR (any_name  (ASSIGN (select_value|math_expr0|math_expr1|math_expr1_withbrackets))?) (COMMA any_name (ASSIGN (select_value|math_expr0|math_expr1|math_expr1_withbrackets))? )*
+;
+
+function_stms:
+K_FUNCTION any_name OPEN_PAR (K_VAR any_name (COMMA K_VAR any_name)*)? CLOSE_PAR
+OPEN_BLOCK stat*  K_RETURN CLOSE_BLOCK
+;
+
+stat:
+ if_stmt
+|var_stmt
+|while_stmt
+|do_while_stmt
+|switch_stmt
+|one_line_instruction
+|return_stmt
+|OPEN_BLOCK stat* CLOSE_BLOCK
+;
+
+for_stmt:
+K_FOR OPEN_PAR K_VAR?  (assingment_rule_without_scol|math_expr_plus|math_expr2_withbrackets|math_expr2|IDENTIFIER) SCOL logic_resault SCOL  (math_expr_plus|math_expr2|math_expr2_withbrackets|assingment_rule_without_scol)  CLOSE_PAR
+( one_line_instruction| OPEN_BLOCK stat* CLOSE_BLOCK)
+;
+
+do_while_stmt:
+K_DO
+  ( one_line_instruction| OPEN_BLOCK stat* CLOSE_BLOCK)
+  K_WHILE '('(logic_resault)  ')' SCOL
+;
+
+while_stmt
+:
+ K_WHILE '('(logic_resault)  ')'  ( one_line_instruction| OPEN_BLOCK stat* CLOSE_BLOCK)
+;
+
+condition_block:
+'('(logic_resault) ')'  ( one_line_instruction| OPEN_BLOCK stat* CLOSE_BLOCK)
+;
+if_stmt
+ : K_IF condition_block (K_ELSE K_IF condition_block)* (K_ELSE ( one_line_instruction| OPEN_BLOCK stat* CLOSE_BLOCK))?
+;
+switch_stmt
+ :K_SWITCH OPEN_PAR ( result_mathematic) CLOSE_PAR
+  OPEN_BLOCK
+ K_CASE (math_expr0|'"'IDENTIFIER'"')':' (one_line_instruction| stat* ) (K_BREAK SCOL)? stat*
+ (K_CASE (math_expr0|'"'IDENTIFIER'"')':' (one_line_instruction|stat*) (K_BREAK SCOL)? stat*)*
+ (K_DEFAULT ':' (one_line_instruction|stat*) (K_BREAK SCOL)? stat*)?
+ CLOSE_BLOCK
+;
+
+return_stmt
+ :K_RETURN (var_stmt|math_expr2|math_expr2_withbrackets|math_expr_plus|assingment_rule_without_scol|logic_all) SCOL
+;
+one_line_instruction
+ :(var_stmt|math_expr2|math_expr2_withbrackets|math_expr_plus|assingment_rule_without_scol|return_stmt) SCOL
+;
+
+math_op0
+ : ( '++' | '--' )
+;
+
+math_op1
+ : ( '*' | '/' | '%' )
+   | ( '+' | '-' )
+;
+
+math_op2
+ : ( '*=' | '/=' | '%=' )
+   | ( '+=' | '-=' )
+;
+
+math_op3
+ : ( '<' | '<=' | '>' | '>=' )
+ ;
+
+logic_operator1
+ :  ( '==' | '!=' )
+;
+
+logic_operator2
+ :  ('&&' | '||' )
+;
+
+math_expr0
+ :  NUMERIC_LITERAL
+ | '(' DIGIT ')'
+ | IDENTIFIER
+ | '(' IDENTIFIER ')'
+ | '('math_expr0 ')'
+;
+
+math_expr_all
+ : math_expr1_withbrackets|math_expr_plus|math_expr2_withbrackets|math_expr0|assingment_rule_with_bracket
+;
+
+math_expr_plus
+ : math_op0 IDENTIFIER
+ | IDENTIFIER math_op0
+ | OPEN_PAR math_op0  IDENTIFIER CLOSE_PAR
+ | OPEN_PAR IDENTIFIER math_op0  CLOSE_PAR
+ | OPEN_PAR math_expr_plus CLOSE_PAR
+;
+
+// x+5|5+5
+math_expr1
+ : math_expr_all math_op1 math_expr_all (math_op1 math_expr_all)*
+;
+math_expr1_withbrackets
+ : '(' math_expr1 ')'
+ |'(' math_expr1_withbrackets ')'
+;
+
+// x+= y | (x+5)
+math_expr2
+ : any_name  math_op2 ( math_expr_all | math_expr1|assingment_rule_without_bracket )
+;
+math_expr2_withbrackets
+ : '(' math_expr2')'
+// | math_expr1_withbrackets
+ | '(' math_expr2_withbrackets ')'
+;
+
+// > < >= <=
+math_expr3
+ : ( math_expr_all| math_expr1) math_op3 (math_expr_all| math_expr1)
+;
+math_expr3_withbrackets
+ : '(' math_expr3')'
+ | '(' math_expr3_withbrackets ')'
+;
+math_expr_without_digit
+ :math_expr1|math_expr1_withbrackets|math_expr2|math_expr2_withbrackets|math_expr_plus|IDENTIFIER
+;
+
+result_mathematic
+ : math_expr_all | math_expr1|math_expr2
+;
+
+// ==  |  !=
+logic_expr1
+ : (assingment_rule_with_bracket|math_expr_all|math_expr1 |K_TRUE |K_FALSE ) logic_operator1 (assingment_rule_with_bracket|math_expr1|math_expr_all|K_TRUE |K_FALSE )
+ | ( math_expr3 | math_expr3_withbrackets ) logic_operator1 ( math_expr3 | math_expr3_withbrackets )
+ | math_expr3
+;
+logic_expr1_withbracets
+ : '(' logic_expr1 ')'
+ | '(' logic_expr1_withbracets ')'
+;
+
+logic_all
+ :IDENTIFIER| logic_expr1 | logic_expr1_withbracets |K_TRUE |K_FALSE
+;
+// &&  |  ||
+logic_expr2
+ : logic_all logic_operator2 logic_all (logic_operator2 logic_all)*
+ | logic_expr1
+;
+logic_expr2_withbrackets
+ : OPEN_PAR logic_expr2 CLOSE_PAR
+ | logic_expr1_withbracets
+ | '(' logic_expr2_withbrackets ')'
+;
+logic_resault
+ : logic_expr2 | logic_expr2_withbrackets |K_TRUE |K_FALSE|IDENTIFIER
+;
+
+assingment_rule_without_bracket
+ : IDENTIFIER ASSIGN result_mathematic
+;
+assingment_rule_with_bracket
+ : OPEN_PAR IDENTIFIER '='result_mathematic CLOSE_PAR
+ | OPEN_PAR assingment_rule_with_bracket CLOSE_PAR
+;
+assingment_rule_with_scol
+ : (assingment_rule_without_bracket | assingment_rule_with_bracket) CLOSE_BLOCK SCOL
+;
+assingment_rule_without_scol
+ : (assingment_rule_without_bracket | assingment_rule_with_bracket)
+;
+
+
+
+
+select_value
+ : K_SELECT ( K_DISTINCT | K_ALL )? any_name
+   ( K_FROM ( table_or_subquery ( ',' table_or_subquery )* | join_clause ) )?
+   ( K_WHERE expr )?
+   ( K_GROUP K_BY expr ( ',' expr )* ( K_HAVING expr )? )?
+ | K_VALUES '(' expr ( ',' expr )* ')' ( ',' '(' expr ( ',' expr )* ')' )*
+ ;
 alter_table_stmt
  : K_ALTER K_TABLE K_ONLY? ( database_name '.' )? source_table_name
    ( K_RENAME K_TO new_table_name
@@ -668,6 +835,7 @@ keyword
  | K_WITH
  | K_WITHOUT
  | K_NEXTVAL
+ | K_VAR
  ;
 
 // TODO check all names below
@@ -749,13 +917,18 @@ transaction_name
  : any_name
  ;
 
+//IDENTIFIER | keyword | STRING_LITERAL | '(' any_name ')'
+
 any_name
  : IDENTIFIER
- | keyword
+// | keyword
  | STRING_LITERAL
  | '(' any_name ')'
  ;
 
+//Define arthmatic opreation
+OPEN_BLOCK :'{';
+CLOSE_BLOCK :'}';
 SCOL : ';';
 DOT : '.';
 OPEN_PAR : '(';
@@ -769,6 +942,7 @@ TILDE : '~';
 PIPE2 : '||';
 DIV : '/';
 MOD : '%';
+//Define Logical opreation
 LT2 : '<<';
 GT2 : '>>';
 AMP : '&';
@@ -782,6 +956,10 @@ NOT_EQ1 : '!=';
 NOT_EQ2 : '<>';
 
 // http://www.sqlite.org/lang_keywords.html
+
+//Define reserved Word
+K_FUNCTION: F U N C T I O N ;
+K_RETURN: R E T U R N ;
 K_ABORT : A B O R T;
 K_ACTION : A C T I O N;
 K_ADD : A D D;
@@ -839,6 +1017,8 @@ K_GLOB : G L O B;
 K_GROUP : G R O U P;
 K_HAVING : H A V I N G;
 K_IF : I F;
+K_WHILE: W H I L E;
+K_DO:D O ;
 K_IGNORE : I G N O R E;
 K_IMMEDIATE : I M M E D I A T E;
 K_IN : I N;
@@ -909,7 +1089,14 @@ K_WHEN : W H E N;
 K_WHERE : W H E R E;
 K_WITH : W I T H;
 K_WITHOUT : W I T H O U T;
+K_VAR : V A R;
+K_TRUE : T R U E;
+K_FALSE : F A L S E;
+K_SWITCH : S W I T C H;
+K_BREAK : B R E A K;
 
+
+//To write the word
 IDENTIFIER
  : '"' (~'"' | '""')* '"'
  | '`' (~'`' | '``')* '`'
@@ -926,10 +1113,10 @@ BIND_PARAMETER
  : '?' DIGIT*
  | [:@$] IDENTIFIER
  ;
-
+//Define commint
 STRING_LITERAL
  : '\'' ( ~'\'' | '\'\'' )* '\''
- ;
+   ;
 
 BLOB_LITERAL
  : X STRING_LITERAL
@@ -951,7 +1138,12 @@ UNEXPECTED_CHAR
  : .
  ;
 
+//Define DIGIT
+
 fragment DIGIT : [0-9];
+
+
+//Define Alphapet
 
 fragment A : [aA];
 fragment B : [bB];
@@ -979,3 +1171,4 @@ fragment W : [wW];
 fragment X : [xX];
 fragment Y : [yY];
 fragment Z : [zZ];
+
